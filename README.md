@@ -1,229 +1,225 @@
 # RAG on Weaviate — Knowledge Base Q&A
 
-An educational, modular RAG (Retrieval-Augmented Generation) service in Python.
-Target pipeline: **documents → chunking → embeddings → Weaviate → retrieval → grounded LLM answer with sources**.
+Modular Retrieval-Augmented Generation mini-product in Python.
 
-The project is built step by step over 7 days. **Current progress: Day 6 — weak-context guards + evaluation.**
+```
+documents → clean → chunk → embed ┐
+                                  ├→ Weaviate (HNSW, cosine)
+question  → normalize → embed ────┘        │
+                                     top-k chunks + certainty
+                                           │
+                        noise filter → weak-context gate ──(too weak)──→ honest refusal
+                                           │
+                        numbered context + strict prompt → LLM
+                                           │
+                        grounded answer + [n] citations + sources
+```
 
-## Roadmap
+**What it does:** loads local documents, splits them into overlapping chunks, stores chunks +
+embeddings + metadata in Weaviate, retrieves relevant context for a question, generates an
+answer grounded ONLY in that context, cites its sources, and refuses honestly when retrieval
+is weak instead of hallucinating. Usable from a CLI and over an HTTP API.
 
-- [x] **Day 1 — Document loading.** `knowledge_base/` folder, loading `.txt`/`.md` files, cleaning, console summary, project skeleton.
-- [x] **Day 2 — Chunking.** Paragraph-aware splitting with overlap and per-chunk metadata. Self-checks in `test_chunking.py`.
-- [x] **Day 3 — Weaviate + embeddings.** Weaviate via Docker (or Embedded), `KnowledgeChunk` collection, embeddings per chunk (OpenAI or offline fallback), idempotent batch indexing, verification. Self-checks in `test_embedder.py`.
-- [x] **Day 4 — Retrieval.** Question normalization, query embedding, Weaviate `near_vector` top-k with score/distance/source, hybrid (BM25+vector) mode, golden-set demo with 6 test questions. Self-checks in `test_retriever.py`.
-- [x] **Day 5 — Grounded answers.** Full cycle question → retrieval → context prompt → LLM → answer with [n] citations + source list; strict anti-fabrication prompt; no-retrieval baseline comparison; offline extractive fallback. Self-checks in `test_pipeline.py`.
-- [x] **Day 6 — Weak-context handling + evaluation.** Certainty-based noise filter and pre-LLM refusal gate, hard-negative question sets, `--evaluate` report with threshold-tuning guidance. Self-checks in `test_weak_context.py`.
-- [ ] Day 7 — final integration & polish.
+---
+
+## Quickstart
+
+Python 3.10+. Works fully offline out of the box (deterministic fallback backends); add one
+API key for real semantic search and real generated answers.
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                # optional: add your API key(s)
+```
+
+### 1. Spin up Weaviate
+
+```bash
+docker compose up -d          # Weaviate 1.38.2 on :8080 (REST) and :50051 (gRPC)
+docker compose down           # stop (data persists);  down -v  wipes the data
+```
+
+No Docker? Set `WEAVIATE_MODE=embedded` in `.env` — the client downloads a Weaviate binary
+and runs it as a subprocess (data in `./weaviate_data/`).
+
+### 2. Prepare the knowledge base
+
+Drop UTF-8 `.txt` / `.md` files into `knowledge_base/`. The repo ships with 8 articles about
+RAG itself (embeddings, vector DBs, Weaviate, chunking, prompting, hallucinations,
+evaluation), so the system can answer questions about how it works from its own documents.
+Replace them with your own at any time, then `python main.py --reindex`.
+
+### 3. Load chunks into Weaviate
+
+```bash
+python main.py                # first run indexes automatically, then runs the demo
+python main.py --reindex      # re-import after editing the knowledge base
+python main.py --rebuild      # drop + re-index (after changing chunking or the embedder)
+```
+
+Indexing is idempotent: object UUIDs are `uuid5(chunk_id)`, so re-runs upsert instead of
+duplicating. Startup also runs a vector-index health probe and rebuilds automatically if the
+index was corrupted by an unclean shutdown.
+
+### 4. Ask questions
+
+```bash
+python main.py --ask "Why are documents split into chunks?"
+python main.py --ask "What does alpha control?" --hybrid --show-chunks
+python main.py --compare "Why are documents split into chunks?"   # baseline vs RAG
+python main.py --evaluate                                          # quality report
+```
+
+Or over HTTP:
+
+```bash
+uvicorn api:app               # or: python api.py   → interactive docs at /docs
+curl -s localhost:8000/health
+curl -s -X POST localhost:8000/ask -H 'content-type: application/json' \
+     -d '{"question":"What is groundedness and how can it be checked?","top_k":4}'
+curl -s -X POST localhost:8000/search -H 'content-type: application/json' \
+     -d '{"question":"hybrid search alpha","top_k":3}'              # retrieval only
+```
+
+`POST /ask` accepts `{question, top_k?, hybrid?, alpha?}` and returns the full `RAGAnswer`.
+A weak-context refusal is a normal `200` response with `"weak_context": true` and an empty
+source list — a refusal is a correct answer, not an error.
+
+### 5. Interpret the sources
+
+Example answer (real run: `openai/gpt-oss-20b` via Hugging Face, offline hash embeddings):
+
+```
+Q: What is groundedness and how can it be checked?
+A [RAG (retrieval + generation), model: openai/gpt-oss-20b, retrieval confidence 0.58]:
+   Groundedness is the property that every claim in an answer is supported by an explicitly
+   provided source. It can be checked by taking each sentence of the answer and verifying
+   that some retrieved fragment supports it. [1]
+   Sources:
+     [1] doc_007_chunk_001   07_hallucinations_and_grounding.txt — Hallucinations and ...  (score 0.583)
+     [2] doc_007_chunk_002   07_hallucinations_and_grounding.txt — Hallucinations and ...  (score 0.546)
+```
+
+* `[n]` markers in the answer point into the numbered **Sources** list; `source_name` is the
+  file in `knowledge_base/`, `chunk_id` locates the exact fragment — open the file to verify
+  any claim. Sources list everything the model was given; the markers show what it used.
+* `retrieval confidence` is the best chunk certainty: `1 − cosine_distance/2`
+  (1.0 identical, 0.5 orthogonal/no similarity). It is the gate's signal.
+* Three refusal layers: `weak_context: true` → the confidence **gate** refused before any
+  LLM call; the exact sentence "The knowledge base does not contain enough information…"
+  without the flag → the **generator** refused per the prompt rules; anything else is a
+  grounded, cited answer.
+
+---
+
+## Demo questions
+
+Answerable (each names its expected source; see `evaluation.py`):
+1. Why are documents split into chunks instead of being embedded whole?
+2. What is cosine similarity used for when comparing embeddings?
+3. How does hybrid search combine keyword and vector signals?
+4. What is HNSW and why do vector databases use approximate search?
+5. What are the two ways to get vectors into Weaviate?
+6. What is groundedness and how can it be checked?
+7. Which metrics measure retrieval quality in a RAG system?
+8. What should the model do when the context does not contain the answer?
+
+Unanswerable controls (must be refused): capital of France, sourdough recipe, FIFA 2022,
+data-scientist salary, PostgreSQL replication (hard negative: overlapping vocabulary),
+Weaviate Cloud pricing (hard negative: entity in the KB, fact absent).
+`python main.py` demos six of these; `--evaluate` runs all fourteen with a report.
+
+## Configuration & providers
+
+Everything is configured in `.env` (see `.env.example`). Both the embedder and the LLM speak
+the OpenAI protocol, so any compatible provider works; each component can use its own
+provider (`EMBEDDING_API_KEY/_BASE_URL`, `LLM_API_KEY/_BASE_URL`) with shared `OPENAI_*` as
+fallback.
+
+| setup | embeddings | LLM | gate (`RETRIEVAL_WEAK_THRESHOLD`) |
+|---|---|---|---|
+| offline (default, no keys) | `hashing-bow-…-v2` | extractive fallback | 0.55 (measured: good 0.58–0.75 vs bad 0.53–0.63 — ranges overlap, see Evaluation) |
+| Google Gemini (tested) | `gemini-embedding-2` | `gemini-2.5-flash` / `gemini-3.1-flash-lite` | **0.80** (measured: good 0.86–0.93 vs thresholdable bad ≤ 0.785) |
+| Hugging Face (chat only) | pair with Gemini or hash | `openai/gpt-oss-20b` via `https://router.huggingface.co/v1` | per embedder |
+| OpenAI | `text-embedding-3-small` | `gpt-4o-mini` | tune via `--evaluate` |
+| Ollama (local) | `nomic-embed-text` | e.g. `llama3.2` | tune via `--evaluate` |
+
+After ANY embedder change run `python main.py --rebuild` — vectors from different models are
+incompatible, and the store warns if the collection was built by another embedder.
+
+## How it works (module map)
+
+`loader.py` cleans text but keeps single blank lines — paragraph boundaries the chunker needs
+(Day 1). `chunking.py` packs whole paragraphs up to `max_chars=1000` with a 200-char sentence
+overlap, falling back to sentence/word splitting for oversized input (Day 2). `embedder.py`
+and `weaviate_store.py` embed chunks and store them (bring-your-own-vectors, HNSW + cosine,
+idempotent upserts) (Day 3). `retriever.py` returns top-k `RetrievedChunk`s with certainty
+and distance for vector or hybrid search — hybrid distance is computed client-side because
+the fused score is per-query-normalized and unusable as confidence (Day 4). `prompts.py` +
+`generator.py` + `rag_pipeline.py` build the numbered-fragment prompt, call the LLM (or the
+offline extractive fallback) and return a `RAGAnswer` with sources (Day 5). The pipeline's
+noise filter and confidence gate refuse weak retrieval before the LLM; `evaluation.py`
+measures all of it (Day 6). `indexing.py` + `api.py` share the index flow between the CLI and
+FastAPI (Day 7). All data contracts are pydantic models in `schemas.py`.
+
+## Evaluation & tuning
+
+`python main.py --evaluate` answers 8 good + 6 bad questions and reports: expected-source
+rank, retrieval confidence, kept-chunk ratio, and behavior (ANSWERED / REFUSED(gate) /
+REFUSED(generator)), plus the confidence ranges of both groups. Tuning procedure: put the
+gate inside the gap between those ranges. Measured results: with the offline hash embedder
+the ranges overlap (no threshold separates them — hence the layered defense); with
+`gemini-embedding-2` + `gemini-3.1-flash-lite` the system scored 8/8 retrieval hits at rank 1
+and refused 6/6 unanswerable questions, and the gap (0.785 vs 0.860) supports a 0.80 gate.
+Hard negatives can never be caught by a threshold — the pricing question scores 0.87, inside
+the good range — they are refused by the prompt layer, which needs a real LLM.
+
+## Testing
+
+Seven suites, 42 self-checks, no server or key required — run each directly
+(`python test_chunking.py` … `python test_api.py`) or all via `python -m pytest -q`.
+They cover chunk size/overlap invariants, embedder determinism and provider quirks (Gemini's
+null `index` fields), retrieval mapping, prompt contracts, the extractive generator, the
+weak-context guards (including the hybrid fused-score trap), the indexing health probe, and
+the API contract.
+
+## Troubleshooting
+
+* **Everything is refused with confidence 0.00 although the index has objects** — the vector
+  index was corrupted by an unclean shutdown; startup detects and rebuilds it automatically
+  (re-importing alone does not repair a corrupted HNSW). Manual fix: `python main.py --rebuild`.
+* **"Collection was built with a different embedder" warning** — run `--rebuild`.
+* **HTTP 503/429 from a provider** — the OpenAI SDK auto-retries transient errors; on free
+  tiers just re-run.
+
+## Ideas for the next module
+
+Re-ranking retrieved chunks with a cross-encoder; streaming answers over the API; an
+ingestion endpoint + PDF/DOCX loaders; automated groundedness scoring (LLM-as-judge) on top
+of `evaluation.py`; caching query embeddings; auth and rate limiting on the API; packaging
+the app itself into docker-compose next to Weaviate.
 
 ## Project structure
 
 ```
 rag-weaviate/
-├── main.py               # entry point — full RAG demo / --ask / --compare / --retrieval-demo
-├── loader.py             # Day 1: document loading + text cleaning
-├── chunking.py           # Day 2: paragraph-aware chunking with overlap
-├── embedder.py           # Day 3: OpenAI embeddings + offline hashing fallback
-├── weaviate_store.py     # Day 3: connection, schema, idempotent import, verification
-├── schemas.py            # pydantic models: TextItem base, Document, Chunk
-├── test_chunking.py      # Day 2 self-checks
-├── test_embedder.py      # Day 3 self-checks (offline backend)
-├── test_retriever.py     # Day 4 self-checks (hit mapping, query normalization)
-├── test_pipeline.py      # Day 5 self-checks (prompts, extractive generator, pipeline)
-├── test_weak_context.py  # Day 6 self-checks (gate, noise filter, hybrid trap)
-├── retriever.py          # Day 4: top-k vector & hybrid retrieval with scores
-├── generator.py          # Day 5: OpenAI-compatible LLM + offline extractive fallback
-├── prompts.py            # Day 5: grounding rules, context formatting, refusal sentence
-├── rag_pipeline.py       # Day 5/6: orchestration + noise filter + weak-context gate
-├── evaluation.py         # Day 6: good/bad question sets + qualitative report
-├── knowledge_base/       # 8 short articles about RAG concepts (.txt)
-├── docker-compose.yml    # local Weaviate 1.38.2 (REST 8080, gRPC 50051)
-├── .env.example          # configuration template (keys, backends, ports)
-├── requirements.txt
-└── README.md
+├── main.py               # CLI: demos, --ask/--compare, --evaluate, index management
+├── api.py                # FastAPI service: GET /health, POST /search, POST /ask
+├── indexing.py           # shared flow: load → chunk → embed → import (+ health probe)
+├── loader.py             # document loading + cleaning
+├── chunking.py           # paragraph-aware chunking + overlap
+├── embedder.py           # embeddings: OpenAI-compatible + hash
+├── weaviate_store.py     # schema, idempotent import, search
+├── retriever.py          # top-k retrieval with certainty
+├── prompts.py            # grounding rules + refusal sentence
+├── generator.py          # LLM + offline extractive fallback
+├── rag_pipeline.py       # orchestration + weak-context guards
+├── evaluation.py         # question sets + quality report
+├── schemas.py            # pydantic data contracts
+├── knowledge_base/       # 8 sample articles (replace with your own)
+├── test_*.py             # 7 suites / 42 checks
+├── docker-compose.yml    # Weaviate 1.38.2
+├── .env.example          # configuration template
+└── requirements.txt
 ```
-
-## Quickstart (Day 3)
-
-Python 3.10+ required. Docker is optional (see embedded mode below).
-
-```bash
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env                 # put your OPENAI_API_KEY here (optional)
-
-# 1) Start Weaviate (option A — Docker, recommended)
-docker compose up -d
-
-# 2) Index (first run) + retrieval demo over 6 golden-set questions
-python main.py
-
-# Ask your own question (full RAG cycle: answer + sources)
-python main.py --ask "Why are documents split into chunks?"
-python main.py --ask "What does alpha control?" --hybrid --show-chunks
-
-# Compare: the same question answered WITHOUT retrieval vs WITH retrieval
-python main.py --compare "Why are documents split into chunks?"
-
-# Day 4 golden-set retrieval check (regression tool)
-python main.py --retrieval-demo
-
-# Day 6: evaluate over answerable + unanswerable question sets
-python main.py --evaluate
-python main.py --evaluate --weak-threshold 0.6   # experiment with the gate
-
-# Index management
-python main.py --reindex             # re-import after editing the knowledge base
-python main.py --rebuild             # drop + re-index after changing chunking/embedder
-
-# Self-checks
-python test_chunking.py
-python test_embedder.py
-python test_retriever.py
-python test_pipeline.py
-python test_weak_context.py
-```
-
-**Option B — no Docker:** set `WEAVIATE_MODE=embedded` in `.env`. The client downloads a
-Weaviate binary on first use and runs it as a subprocess (data persists in `./weaviate_data/`).
-Handy for CI and quick experiments; Docker is the primary, production-like path.
-
-## Embeddings (`embedder.py`)
-
-| backend | when | quality |
-|---------|------|---------|
-| `OpenAIEmbedder` | `OPENAI_API_KEY` set (or `EMBEDDING_BACKEND=openai`) | real semantic vectors (`text-embedding-3-small`, 1536-d by default) |
-| `HashingEmbedder` | no key / `EMBEDDING_BACKEND=hash` | offline, deterministic, keyword-overlap only — for free development & tests |
-
-`OPENAI_BASE_URL` switches to any OpenAI-compatible provider, and each component can also use
-its own provider via `EMBEDDING_API_KEY`/`EMBEDDING_BASE_URL` and `LLM_API_KEY`/`LLM_BASE_URL`
-(falling back to the shared `OPENAI_*` vars). Typical mixed setup: the LLM from Hugging Face
-Inference Providers (`LLM_BASE_URL=https://router.huggingface.co/v1`, model e.g.
-`openai/gpt-oss-20b`, HF token with the "Make calls to Inference Providers" permission — note
-HF's OpenAI-compatible endpoint serves chat only, not embeddings) plus Gemini or the offline
-hash backend for embeddings. Documents and queries are always embedded by the same backend; the collection remembers which embedder built it (in its
-description) and the store logs a warning if you later connect with a different one — in that
-case re-index with `--rebuild`, since vectors from different models are incompatible.
-
-## Weaviate storage (`weaviate_store.py`)
-
-* Collection `KnowledgeChunk`, **bring-your-own-vectors** (no vectorizer module), HNSW index
-  with **cosine** distance.
-* Properties: `chunk_id`, `document_id`, `source_name`, `title`, `chunk_index`, `text`.
-* **Idempotent indexing:** every object's UUID is `uuid5(chunk_id)`, so re-importing the same
-  knowledge base *overwrites* objects instead of duplicating them (verified: two consecutive
-  runs keep the count at 24).
-* **Caveat:** if you change chunking parameters or the embedding model, the chunk ids / vectors
-  change — old objects would linger. That is exactly what `python main.py --rebuild` is for.
-* Verification: `main.py` prints the object count (expected vs actual) and two sample objects
-  with all metadata and the stored vector dimension.
-
-## How chunking works (Day 2, `chunking.py`)
-
-Paragraph-aware packing with a sentence-level fallback: text splits into paragraphs (Day 1
-preserved blank-line boundaries); oversized paragraphs split into sentences; monster sentences
-hard-split by words. New content per chunk ≤ `max_chars` (default 1000 ≈ 150–200 words); each
-next chunk starts with the last sentences of the previous one (`overlap_chars=200`, ~20%), so
-boundary thoughts survive. Tiny trailing chunks merge back when they fit (`min_chunk_chars=200`).
-Full chunk text ≤ `max_chars + overlap_chars + 2`.
-
-## What cleaning does (Day 1, `loader.clean_text`)
-
-Unicode NFKC normalization; CRLF/CR → LF; tabs & non-breaking spaces → spaces; collapsed space
-runs; per-line trim; multiple blank lines → one. A single blank line is deliberately **kept** as
-the paragraph separator the chunker relies on.
-
-## Knowledge base
-
-`knowledge_base/` ships with 8 articles about RAG itself — embeddings, vector databases,
-Weaviate, chunking, prompting, hallucinations, evaluation — so the finished system can answer
-questions about how it works from its own documents. Files `02` and `05` intentionally contain
-messy whitespace so the cleaning step visibly does something. Any UTF-8 `.txt`/`.md` dropped
-into `knowledge_base/` is picked up automatically.
-
-## Retrieval (Day 4, `retriever.py`)
-
-Flow: normalize the question → embed it **with the same backend that indexed the chunks** →
-Weaviate `near_vector` (or `hybrid`) → top-k `RetrievedChunk` objects with `rank`, `score`,
-`distance`, `chunk_id`, `source_name`, `text`.
-
-Score semantics: in vector mode `score` is Weaviate's *certainty* for cosine (0..1, higher =
-closer; 0.5 means orthogonal, i.e. no similarity at all) and `distance` is the raw cosine
-distance. In hybrid mode `score` is the fused BM25+vector value (`alpha`: 0 = keywords only,
-1 = vectors only). Beware: fusion normalizes scores **per query** (relative score fusion), so
-the top hit of *any* query scores near the top of the scale — never use the fused score as an
-absolute confidence threshold. Since the hybrid API returns no geometric measure, the store
-also computes each hit's true cosine `distance` client-side from its stored vector, so you can
-see both signals (a hit with distance 1.0 got in purely via keywords). Hybrid requires passing
-the query vector explicitly because the collection brings its own vectors.
-
-`python main.py` (no args) skips re-indexing when the collection is already populated and runs
-a golden-set demo: 5 in-scope questions annotated with the source file expected in the top-k
-(printed as HIT/MISS) plus one out-of-scope control ("What is the capital of France?") whose
-visibly lower top score previews the Day 6 weak-context threshold. It finishes with a
-vector-vs-hybrid side-by-side where BM25 promotes the chunk containing the literal query term.
-
-Note on the offline embedder: it now filters ~60 English stopwords (`hashing-bow-…-v2`) —
-without that, function words dominated and even unrelated questions scored high. If you have an
-index built by the Day 3 version, the store will warn about the embedder mismatch: run
-`python main.py --rebuild` once. With a real embedding API the in-scope/out-of-scope score gap
-becomes far larger than the hash backend can show.
-
-## Grounded generation (Day 5, `prompts.py` + `generator.py` + `rag_pipeline.py`)
-
-Full cycle: `RAGPipeline.answer(question)` → retrieve top-k chunks → format them as numbered,
-source-labelled fragments → send with a strict system prompt → return a `RAGAnswer` (pydantic)
-holding the answer text, a source list mirroring the [n] markers, the retrieved chunks and the
-model name.
-
-The system prompt is the anti-hallucination contract: answer ONLY from the numbered fragments,
-never invent facts beyond them, cite every claim with [n], and — if the fragments are not
-enough — reply with the exact refusal sentence (`prompts.NO_ANSWER_SENTENCE`), which the
-pipeline and tests can recognize. Generation runs at low temperature by default (0.2).
-
-Generation backends (mirroring the embedder design):
-
-| backend | when | quality |
-|---------|------|---------|
-| `OpenAIGenerator` | `OPENAI_API_KEY` set (or `LLM_BACKEND=openai`) | real LLM via OpenAI or any compatible endpoint (Gemini, Anthropic, Ollama, ... through `OPENAI_BASE_URL`); model via `LLM_MODEL` |
-| `ExtractiveGenerator` | no key / `LLM_BACKEND=extractive` | offline stand-in: copies the sentences most lexically relevant to the question and cites their chunks; declines when nothing overlaps. Cannot rephrase or synthesize — for pipeline development only |
-
-`python main.py --compare "..."` answers the same question twice: the baseline (no retrieval,
-parametric knowledge only, no sources) and the RAG answer (built from fragments, every claim
-citable). With the offline fallback the baseline honestly reports it has no knowledge source —
-which is itself the point of the comparison; with a real LLM you will typically see a plausible
-but generic and unverifiable baseline vs a specific, cited RAG answer.
-
-## Weak-context handling & evaluation (Day 6, `rag_pipeline.py` + `evaluation.py`)
-
-Three defense layers against confident hallucination, in execution order:
-
-1. **Noise filter** (`RETRIEVAL_MIN_CHUNK_SCORE`, default 0.52) — retrieved chunks whose
-   certainty is below the bar never enter the prompt. Targets obvious junk (orthogonal 0.50
-   hits), not borderline chunks, since mildly-noisy context is the prompt's job to handle.
-2. **Confidence gate** (`RETRIEVAL_WEAK_THRESHOLD`, default 0.55) — if the *best* certainty is
-   below the gate, the pipeline returns the honest refusal sentence immediately: no LLM call,
-   no tokens, no hallucination risk. `RAGAnswer.weak_context=True` marks these.
-3. **Prompt rules** — questions on-topic enough to pass the gate but unanswered by the
-   fragments (hard negatives, e.g. "How much does Weaviate Cloud cost?") can only be refused
-   by the model itself. This layer needs a real LLM; the extractive fallback fails hard
-   negatives by design.
-
-Gating always uses **certainty** (`1 − cosine_distance/2`), never the hybrid fused score —
-fusion is normalized per query, so even junk queries produce a top hit near the top of the
-scale (guarded by a dedicated test).
-
-**Measured with the offline hash embedder** (`python main.py --evaluate`, 8 answerable + 6
-unanswerable questions): answerable — 8/8 expected sources in top-4 (6 at rank 1), all
-answered, confidence 0.58–0.75; unanswerable — confidence 0.53–0.63, gate caught 2, extractive
-generator refused 1, and 3 leaked (one borderline off-topic + two hard negatives). The key
-finding: with the hash embedder the GOOD and BAD confidence ranges **overlap** (0.58–0.63), so
-no threshold alone can separate them — that is precisely why the defense is layered, and why
-real embeddings matter: they widen the gap. After switching embedders, re-run `--evaluate` and
-set the gate inside the reported gap.
-
-**Settings that work for this KB** (documented per Day 6 task): chunking `max_chars=1000` /
-`overlap=200`, paragraph-aware (24 chunks, no mid-thought cuts, 2–3 chunks per article);
-`top_k=4` (enough coverage, little noise); gate 0.55 / filter 0.52 for `hashing-bow-…-v2`.
-Keep the hard negatives in the evaluation set permanently — they are the regression test for
-the whole anti-hallucination stack.

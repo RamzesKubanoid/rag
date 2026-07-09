@@ -1,4 +1,4 @@
-"""Day 2 — splitting documents into retrieval-sized chunks.
+"""Splitting documents into retrieval-sized chunks.
 
 Strategy: paragraph-aware packing with a sentence-level fallback.
 

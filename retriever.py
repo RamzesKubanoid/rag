@@ -1,4 +1,4 @@
-"""Day 4 — semantic retrieval from Weaviate.
+"""Semantic retrieval from Weaviate.
 
 The Retriever accepts a raw user question, normalizes it, embeds it with
 the SAME embedder that indexed the chunks, asks Weaviate for the top-k

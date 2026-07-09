@@ -1,6 +1,6 @@
-"""Day 5/6 — the end-to-end RAG pipeline with weak-context protection.
+"""The end-to-end RAG pipeline with weak-context protection.
 
-Day 6 adds two guard layers that run BEFORE the LLM sees anything:
+Added two guard layers that run BEFORE the LLM sees anything:
 
   1. Noise filter — retrieved chunks whose semantic certainty is below
      `min_chunk_score` are dropped from the prompt (obvious junk only).

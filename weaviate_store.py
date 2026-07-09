@@ -1,4 +1,4 @@
-"""Day 3 — storing chunks and their vectors in Weaviate.
+"""Storing chunks and their vectors in Weaviate.
 
 Design decisions:
   * "Bring your own vectors": the collection has no vectorizer module;

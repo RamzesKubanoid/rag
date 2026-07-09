@@ -1,4 +1,4 @@
-"""Day 5 — prompt templates for grounded answer generation.
+"""Prompt templates for grounded answer generation.
 
 The system prompt is the main anti-hallucination tool of the pipeline:
 it forbids outside knowledge, demands [n] citations for every claim and
