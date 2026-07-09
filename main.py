@@ -1,9 +1,8 @@
 """RAG on Weaviate — application entry point.
 
-Day 6 scope: the full RAG cycle protected by weak-context guards — a
-per-chunk noise filter and a confidence gate that refuses BEFORE the LLM
-when retrieval is poor — plus an evaluation harness over answerable and
-unanswerable question sets (`--evaluate`).
+The complete RAG mini-product CLI. Indexing is shared
+with the HTTP service (api.py); answers are grounded, cited and guarded
+against weak context; evaluation and retrieval demos are built in.
 
 Usage (from the project root):
     python main.py                        # answer the demo questions (full RAG)
@@ -19,7 +18,6 @@ Backends are configured via .env (see .env.example): embeddings + LLM.
 import argparse
 import logging
 import os
-import time
 
 try:  # .env support is optional but convenient
     from dotenv import load_dotenv
@@ -28,11 +26,10 @@ try:  # .env support is optional but convenient
 except ImportError:
     pass
 
-from chunking import split_documents
 from embedder import get_embedder
 from evaluation import BAD_QUESTIONS, GOOD_QUESTIONS, run_evaluation
 from generator import get_generator
-from loader import load_knowledge_base
+from indexing import ensure_indexed
 from rag_pipeline import RAGPipeline
 from retriever import DEFAULT_TOP_K, Retriever
 from schemas import RAGAnswer, RetrievedChunk
@@ -169,30 +166,11 @@ def main() -> None:
 
     setup_logging()
 
-    logger.info("Step 1 — loading documents from '%s/'", KNOWLEDGE_BASE_DIR)
-    documents = load_knowledge_base(KNOWLEDGE_BASE_DIR)
-
-    logger.info("Step 2 — splitting documents into chunks")
-    chunks = split_documents(documents)
-
     embedder = get_embedder()
 
     with WeaviateStore.connect() as store:
-        store.ensure_collection(model_label=embedder.model_name, recreate=args.rebuild)
-
-        existing = store.count()
-        if args.rebuild or args.reindex or existing == 0:
-            logger.info("Step 3 — embedding %d chunks", len(chunks))
-            started = time.perf_counter()
-            vectors = embedder.embed_texts([chunk.text for chunk in chunks])
-            logger.info("Embedded %d chunks with %s in %.2fs (dimension=%d)",
-                        len(vectors), embedder.model_name,
-                        time.perf_counter() - started, embedder.dimension)
-            logger.info("Step 4 — indexing chunks into Weaviate")
-            store.index_chunks(chunks, vectors)
-        else:
-            logger.info("Index already populated (%d objects) — skipping import "
-                        "(--reindex / --rebuild to refresh)", existing)
+        ensure_indexed(store, embedder, kb_dir=KNOWLEDGE_BASE_DIR,
+                       reindex=args.reindex, rebuild=args.rebuild)
 
         retriever = Retriever(store, embedder)
 
@@ -226,7 +204,7 @@ def main() -> None:
                 top_k=args.top_k,
             )
 
-    logger.info("Pipeline with weak-context guards is working — next step: final integration.")
+    logger.info("Done. The same pipeline is available over HTTP: uvicorn api:app (see README).")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Day 5 — answer generation backends.
+"""Answer generation backends.
 
 Mirrors the embedder design: one interface, two implementations.
 

@@ -1,8 +1,7 @@
-"""Day 1 — document loading and basic cleaning.
+"""Document loading and basic cleaning.
 
 Reads plain-text files from the knowledge_base/ folder, normalizes their
-formatting and returns them as a list of `Document` objects, ready for
-chunking on Day 2.
+formatting and returns them as a list of `Document` objects.
 """
 
 import logging

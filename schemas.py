@@ -106,3 +106,12 @@ class RAGAnswer(BaseModel):
         description="Best certainty among retrieved chunks (1 - cosine_distance/2); "
         "None for no-retrieval baseline answers",
     )
+
+
+class AskRequest(BaseModel):
+    """Request body for the API's /ask and /search endpoints (Day 7)."""
+
+    question: str = Field(min_length=1, max_length=2000, description="The user question")
+    top_k: int | None = Field(default=None, ge=1, le=20, description="How many chunks to retrieve")
+    hybrid: bool = Field(default=False, description="Use BM25+vector hybrid retrieval")
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0, description="Hybrid mix: 0=keywords, 1=vectors")

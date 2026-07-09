@@ -1,4 +1,4 @@
-"""Day 6 — evaluation question sets and a qualitative retrieval/answer report.
+"""Evaluation question sets and a qualitative retrieval/answer report.
 
 Two question groups:
   * GOOD_QUESTIONS — the knowledge base contains the answer; each entry

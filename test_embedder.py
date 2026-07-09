@@ -47,6 +47,60 @@ def test_batch_preserves_order_and_handles_empty_text():
     assert _cosine(vectors[0], vectors[2]) > 0.5                 # near-identical texts agree
 
 
+
+# ----------------------------------------------------------------------
+# Regression tests for provider quirks in the OpenAI-compatible path
+# (reproduces the null-index responses of Gemini's compatibility layer)
+# ----------------------------------------------------------------------
+
+class _FakeItem:
+    def __init__(self, index, embedding):
+        self.index = index
+        self.embedding = embedding
+
+
+class _FakeResponse:
+    def __init__(self, data):
+        self.data = data
+
+
+class _FakeEmbeddingsAPI:
+    def __init__(self, items):
+        self.items = items
+
+    def create(self, model, input):  # noqa: A002 - mirrors the SDK signature
+        return _FakeResponse(self.items)
+
+
+class _FakeClient:
+    def __init__(self, items):
+        self.embeddings = _FakeEmbeddingsAPI(items)
+
+
+def test_openai_embedder_tolerates_null_index_fields():
+    from embedder import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder(model="fake-model", api_key="dummy")
+    # Gemini-style response: correct order, but index fields null/mixed
+    embedder._client = _FakeClient([_FakeItem(0, [1.0, 0.0]), _FakeItem(None, [0.0, 1.0])])
+    vectors = embedder.embed_texts(["first", "second"])
+    assert vectors == [[1.0, 0.0], [0.0, 1.0]]  # returned order preserved, no crash
+    assert embedder.dimension == 2              # learned from the first vector
+
+
+def test_openai_embedder_detects_count_mismatch():
+    from embedder import OpenAIEmbedder
+
+    embedder = OpenAIEmbedder(model="fake-model", api_key="dummy")
+    embedder._client = _FakeClient([_FakeItem(0, [1.0, 0.0])])  # 1 vector for 2 inputs
+    try:
+        embedder.embed_texts(["first", "second"])
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected RuntimeError on input/vector count mismatch")
+
+
 if __name__ == "__main__":
     import sys
 

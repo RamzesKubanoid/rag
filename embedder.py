@@ -1,4 +1,4 @@
-"""Day 3 — embeddings for chunks and queries.
+"""Embeddings for chunks and queries.
 
 Two interchangeable backends behind one interface:
 
@@ -89,12 +89,15 @@ class OpenAIEmbedder(Embedder):
         for start in range(0, len(texts), self.batch_size):
             batch = texts[start : start + self.batch_size]
             response = self._client.embeddings.create(model=self.model_name, input=batch)
-            # The API returns items with an index — sort to be safe.
             data = list(response.data)
             if len(data) != len(batch):
                 raise RuntimeError(
                     f"Embedding API returned {len(data)} vectors for {len(batch)} inputs"
                 )
+            # The OpenAI spec returns items in input order AND with an integer
+            # `index` field. Some compatible providers (e.g. Gemini) leave the
+            # index null, so sort only when every index is really an int and
+            # trust the returned order otherwise.
             if all(isinstance(item.index, int) for item in data):
                 data.sort(key=lambda item: item.index)
             vectors.extend(item.embedding for item in data)
