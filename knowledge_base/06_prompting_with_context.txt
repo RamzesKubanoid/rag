@@ -1,0 +1,11 @@
+Prompting an LLM with Retrieved Context
+
+The generation step of a RAG pipeline turns retrieved chunks into a grounded answer. How the prompt is written largely decides whether the model actually uses the context or ignores it and improvises.
+
+A reliable prompt has three parts. The system instruction defines the rules: answer only using the provided context, do not rely on outside knowledge, and if the context does not contain the answer, say so explicitly instead of guessing. The context block contains the retrieved fragments, clearly separated and numbered, each labelled with its source, for example "[1] (chunking_strategies.txt): ...". The user block contains the original question, unchanged.
+
+Numbering the fragments enables citations: the instruction can require the model to reference fragment numbers such as [1] or [3] next to every claim. Citations make answers verifiable, expose which chunks were actually useful, and noticeably discourage fabrication, because a claim without a matching source becomes easy to spot.
+
+Several practical details improve groundedness. Generation temperature should be low, around 0 to 0.3, because factual question answering benefits from determinism rather than creativity. The number of context chunks should stay moderate: stuffing the prompt with weakly relevant text buries the useful passage and increases both cost and confusion. The instruction to admit ignorance deserves special emphasis, since the natural failure mode of a language model is to produce a confident answer whether or not it knows one.
+
+A separate degraded path is needed for weak retrieval. If the best similarity score falls below a threshold, or no chunks are returned at all, the pipeline should not ask the model to answer from nothing; it should return an honest "the knowledge base does not cover this" response. Deciding this before calling the LLM saves tokens and prevents the most embarrassing hallucinations.

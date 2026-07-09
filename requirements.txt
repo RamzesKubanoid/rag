@@ -1,0 +1,7 @@
+# --- Days 1-2 ---
+pydantic>=2.5
+
+# --- Day 3: Weaviate + embeddings ---
+weaviate-client>=4.16,<5
+openai>=1.40
+python-dotenv>=1.0

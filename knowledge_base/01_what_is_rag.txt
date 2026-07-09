@@ -1,0 +1,11 @@
+What Is Retrieval-Augmented Generation?
+
+Retrieval-Augmented Generation (RAG) is an architecture that combines two components: an information retrieval system and a large language model. Instead of asking the model to answer a question from its internal parameters alone, a RAG system first searches an external knowledge base for passages relevant to the question, then passes those passages to the model as context and instructs it to base its answer on them.
+
+The approach solves several practical problems at once. First, language models have a knowledge cutoff: they know nothing about events or documents created after their training data was collected. Second, models have no access to private data such as internal company documentation, product manuals, or personal notes. Third, when a model does not know an answer, it may produce a plausible-sounding but false statement, a failure mode commonly called hallucination. Retrieval addresses all three issues by grounding the model in text that actually exists.
+
+A typical RAG pipeline has two phases. In the indexing phase, documents are loaded, cleaned, split into chunks, converted into vector embeddings, and stored in a vector database. In the query phase, the user question is embedded with the same embedding model, the database returns the top-k most similar chunks, and the language model receives the question together with those chunks and generates an answer.
+
+RAG has clear advantages over fine-tuning for knowledge-intensive tasks. The knowledge base can be updated by simply re-indexing documents, with no model retraining. Answers can cite their sources, which makes them verifiable. Access control can be applied at the retrieval layer, so different users can search different document sets.
+
+RAG is not a silver bullet. If retrieval returns irrelevant passages, the model may still answer incorrectly or be misled by noise. If the knowledge base simply does not contain the answer, the system must be able to say so instead of guessing. For this reason a well-built RAG service always evaluates the quality of the retrieved context and includes an explicit "I don't know" path.

@@ -1,0 +1,14 @@
+Chunking Strategies for RAG
+
+Chunking is the process of splitting documents into smaller pieces before embedding and indexing them. It is necessary for two reasons.   Embedding models and LLMs have input limits, so an entire document often simply does not fit. More importantly, retrieval works best when each stored vector represents one focused idea: a query about a specific detail matches a short relevant passage much better than a long document in which that detail is buried among unrelated topics.  
+
+
+
+The simplest approach is fixed-size chunking: cut the text every N characters or tokens. It is easy to implement and predictable, but it can slice sentences in half. A standard improvement is to add an overlap of 10-20 percent between neighbouring chunks, so that a thought cut at a boundary still appears intact in at least one chunk.
+
+Structure-aware strategies respect natural text boundaries.  Paragraph-based chunking merges consecutive paragraphs until a size limit is reached and never breaks inside a paragraph unless a single paragraph is itself too long. Sentence-based chunking does the same at sentence level. Recursive splitting generalizes the idea: it tries to split by the largest unit first (sections, then paragraphs, then sentences, then words) and only falls back to smaller units when a piece is still oversized.
+
+
+Chunk size is a trade-off. Very small chunks (a sentence or two) give precise matches but may lack the surrounding context the LLM needs to answer. Very large chunks carry full context, but their embeddings become diluted and retrieval brings in noise. For prose, chunks of roughly 200-500 words with a modest overlap are a common starting point; the right value should be validated on real queries.
+
+Every chunk must keep metadata: the source document, the chunk's position or index, and ideally a human-readable title.	This metadata is what allows the final answer to cite its sources and lets developers debug why a particular fragment was retrieved.

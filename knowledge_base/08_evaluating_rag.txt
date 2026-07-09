@@ -1,0 +1,11 @@
+Evaluating a RAG System
+
+A RAG pipeline has two stages that can fail independently, so it is evaluated in two layers: did retrieval find the right fragments, and did the model answer correctly given them. Mixing the layers hides the cause of errors; separating them tells you whether to fix the index or the prompt.
+
+Retrieval evaluation needs a small golden dataset: a list of test questions, each mapped to the chunks or documents that actually contain the answer. Standard metrics are computed over the top-k results. Recall@k measures whether the relevant fragments appear among the top k at all. Precision@k measures how much of the top k is relevant. MRR (mean reciprocal rank) rewards placing the first relevant fragment near the top. Even 15-20 carefully chosen questions reveal most weaknesses of chunking and embedding choices.
+
+Answer evaluation focuses on three questions. Faithfulness: is every claim in the answer supported by the retrieved context? Answer relevance: does the answer actually address the question that was asked? Completeness: does it use the important information the context contained? Manual review works at small scale; at larger scale the common approach is LLM-as-judge, where a strong model receives the question, the context, and the answer, and scores each criterion against a rubric. Automated judges are imperfect but consistent enough to track progress between pipeline versions.
+
+The test set must include negative cases: questions whose answers are absent from the knowledge base. The correct behaviour is an explicit refusal, and every confident answer to such a question counts as a serious failure. Behaviour on empty or weak context is a first-class quality metric of the system, not an edge case.
+
+Finally, evaluation is only useful if it is repeatable. Keep the test questions in the repository, run the same set after every significant change — a new chunk size, a different embedding model, a reworked prompt — and compare metrics, latency, and token cost before adopting the change.
