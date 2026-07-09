@@ -1,0 +1,11 @@
+Weaviate: An Open-Source Vector Database
+
+Weaviate is an open-source vector database written in Go. It stores objects together with their vector embeddings, indexes the vectors with HNSW, and exposes search over REST and gRPC APIs. It can run as a single Docker container on a laptop, as a cluster, or as the managed Weaviate Cloud service, which makes it convenient for both prototypes and production.
+
+Data in Weaviate is organized into collections. A collection is similar to a table: it defines named properties (for example text, source, chunk_index) and holds objects. Every object can carry one vector. There are two ways to get vectors into Weaviate. In the "bring your own vectors" mode the application computes embeddings itself and sends them together with the objects. Alternatively, a vectorizer module such as text2vec-openai can be enabled so that Weaviate calls the embedding API automatically at import and query time. Bringing your own vectors keeps the pipeline explicit, which is useful when you want to understand and control every step.
+
+Weaviate supports several query types. A near_vector query finds objects whose vectors are closest to a supplied vector. A bm25 query performs classic keyword search over text properties. A hybrid query blends both signals with a tunable alpha parameter. All query types can return similarity scores or distances and can be combined with metadata filters, which is exactly what a RAG retriever needs to return the top-k relevant chunks and judge how strong the match is.
+
+From Python, Weaviate is used through the official weaviate-client package. The v4 client communicates over gRPC for speed (port 50051) with REST as a companion channel (port 8080), and provides helpers such as connect_to_local for a development setup. A typical local deployment is described in a short docker-compose file that starts the weaviate container with anonymous access enabled for experiments.
+
+The default distance metric for a collection is cosine distance, which pairs naturally with normalized text embeddings; other metrics such as dot product can be configured per collection.

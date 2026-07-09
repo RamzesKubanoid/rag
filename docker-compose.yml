@@ -1,0 +1,28 @@
+# Local Weaviate for the RAG project (Day 3+).
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down            (data persists in the volume)
+# Reset:   docker compose down -v         (deletes all indexed data)
+#
+# Dev-only settings: anonymous access is enabled and no vectorizer
+# modules are loaded — the application brings its own vectors.
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.38.2
+    container_name: rag-weaviate
+    ports:
+      - "8080:8080"     # REST
+      - "50051:50051"   # gRPC (used by the v4 python client)
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      ENABLE_MODULES: ""
+      QUERY_DEFAULTS_LIMIT: 25
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    restart: on-failure
+
+volumes:
+  weaviate_data:

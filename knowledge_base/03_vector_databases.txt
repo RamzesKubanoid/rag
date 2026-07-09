@@ -1,0 +1,9 @@
+Vector Databases and Similarity Search
+
+A vector database is a storage system designed around one core operation: given a query vector, quickly find the stored vectors that are most similar to it. In a RAG system it holds the embeddings of all document chunks together with their text and metadata, and answers top-k nearest-neighbour queries.
+
+Comparing a query against every stored vector (brute-force search) is exact but scales linearly with collection size, which becomes too slow beyond a few hundred thousand vectors. Vector databases therefore use approximate nearest neighbour (ANN) indexes. The most widely used index is HNSW (Hierarchical Navigable Small World), a multi-layer graph in which search hops between neighbouring nodes and quickly converges to the closest vectors. ANN search trades a tiny loss of recall for orders-of-magnitude speedups, and the trade-off is tunable through index parameters.
+
+Real systems need more than raw vector search. Chunks carry metadata — source file, section, date, access level — and queries often need to filter on it, for example "search only inside the HR documents". Many databases also support hybrid search, which combines vector similarity with classic keyword scoring such as BM25. Hybrid search helps when the query contains rare exact terms like product codes, error messages, or names that embeddings may represent poorly.
+
+Beyond search, a vector database is still a database: it must persist data to disk, support inserting, updating, and deleting objects, and ideally scale horizontally. Popular choices include Weaviate, Qdrant, and Milvus, along with the managed service Pinecone; the pgvector extension adds vector search to PostgreSQL. This project uses Weaviate, which combines an HNSW index, metadata filtering, hybrid search, and a convenient Python client in a single open-source server that runs locally in Docker.

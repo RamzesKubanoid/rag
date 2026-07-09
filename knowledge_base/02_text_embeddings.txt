@@ -1,0 +1,14 @@
+Text Embeddings Explained
+
+An embedding is a numeric representation of a piece of text: a vector of floating-point numbers that captures the meaning of the text rather than its exact wording.	 Texts with similar meaning are mapped to points that lie close to each other in the vector space, while unrelated texts end up   far apart. This single property is what makes semantic search possible.   
+
+
+
+Similarity between two vectors is measured with a metric. The most common choice is cosine similarity, which looks at the angle between vectors and ignores their length. Dot product and Euclidean distance are also used.  Many embedding models normalize their output vectors to unit length, in which case cosine similarity and dot product produce identical rankings.
+
+Embedding models are neural networks trained on large text corpora with objectives that pull related texts together and push unrelated texts apart. Popular hosted options include the OpenAI models text-embedding-3-small (1536 dimensions) and text-embedding-3-large (3072 dimensions). Open-source alternatives from the sentence-transformers family, such as all-MiniLM-L6-v2, can run locally and are often good enough for prototypes.
+
+
+Two rules matter in practice. First, documents and queries must be embedded with the same model: vectors produced by different models live in incompatible spaces, and comparing them is meaningless.	Second, the text given to the embedding model should be a reasonably sized, self-contained chunk. If a chunk is too long, its vector becomes an average of many topics and loses precision; if it is too short, it may not carry enough meaning. This is exactly why chunking quality directly determines retrieval quality.
+
+Embeddings are computed once for every chunk at indexing time and stored in the vector database. At query time only the user question needs to be embedded, which keeps search fast and cheap.  
